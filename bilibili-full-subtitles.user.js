@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩完整字幕
 // @namespace    local.bilibili.transcript
-// @version      1.1.0
+// @version      1.2.0
 // @description  在哔哩哔哩视频页阅读、搜索和复制当前分 P 的完整字幕。
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/*/video/*
@@ -172,9 +172,12 @@
   const shadow = host.attachShadow({ mode: 'open' });
   shadow.innerHTML = `
     <style>
-      :host { all: initial; --edge: 24px; position: fixed; z-index: 2147483000;
-        right: calc(var(--edge) + env(safe-area-inset-right, 0px));
-        bottom: calc(var(--edge) + env(safe-area-inset-bottom, 0px));
+      :host { all: initial; --edge: 24px; --resize-target: 30px; position: fixed; z-index: 2147483000;
+        --top: calc(var(--edge) + env(safe-area-inset-top, 0px));
+        --bottom: calc(var(--edge) + env(safe-area-inset-bottom, 0px));
+        inset: var(--top) calc(var(--edge) + env(safe-area-inset-right, 0px))
+          var(--bottom) calc(var(--edge) + env(safe-area-inset-left, 0px));
+        max-height: calc(100dvh - var(--top) - var(--bottom)); pointer-events: none;
         color: #e7edf4; font: 14px/1.55 system-ui, "Microsoft YaHei", sans-serif; }
       *, *::before, *::after { box-sizing: border-box; }
       [hidden] { display: none !important; }
@@ -185,48 +188,82 @@
       button:hover:not(:disabled) { border-color: #7ad9fd; background: #283848; }
       button:disabled { opacity: .45; cursor: default; }
       :focus-visible { outline: 2px solid #7ad9fd; outline-offset: 2px; }
-      #toggle { display: block; margin-left: auto; border-color: #71dfff; background: #98e6ff;
+      #toggle, #panel { position: absolute; pointer-events: auto; }
+      #toggle, #resize { touch-action: none; -webkit-user-select: none; user-select: none; }
+      #toggle { width: max-content; max-width: 100%; border-color: #71dfff; background: #98e6ff;
+        cursor: grab;
         color: #073143; font-weight: 700; padding: 7px 15px; box-shadow: 0 4px 18px #0b17294d; }
       #toggle:hover { background: #c7f1ff; }
-      #panel { position: absolute; right: 0; bottom: 51px; display: flex; flex-direction: column;
-        width: min(465px, calc(100vw - 2 * var(--edge) - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
-        max-height: min(660px, calc(100vh - 110px - env(safe-area-inset-bottom, 0px)));
-        max-height: min(660px, calc(100dvh - 110px - env(safe-area-inset-bottom, 0px)));
+      #toggle:active { cursor: grabbing; }
+      #panel { display: flex; flex-direction: column;
         border: 1px solid #42505e; border-radius: 14px; background: #151e27;
         color-scheme: dark; box-shadow: 0 12px 38px #0b1729a0; overflow: hidden; }
+      #panel[data-above="false"] { padding-bottom: var(--resize-target); }
+      .panel-content { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: auto; }
+      header, .tools, #status { flex: none; }
       header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px 7px; }
+      #panel[data-above="true"][data-align-right="true"] header { padding-left: var(--resize-target); }
+      #panel[data-above="true"][data-align-right="false"] header { padding-right: var(--resize-target); }
       h2 { font-size: 18px; margin: 0; }
       #close { font-size: 20px; line-height: 1; }
+      #resize { position: absolute; right: 0; bottom: 0; width: var(--resize-target); height: var(--resize-target);
+        min-height: 0; padding: 0; border: 0; background: transparent; color: #9be6ff;
+        cursor: nwse-resize; transform: scale(var(--grip-x, 1), var(--grip-y, 1)); }
+      #resize:hover { background: #283848; }
+      #resize:focus-visible { outline-offset: -3px; }
+      #resize::before, #resize::after { content: ""; position: absolute; right: 8px; bottom: 8px;
+        width: 13px; height: 13px; border-right: 2px solid; border-bottom: 2px solid; }
+      #resize::after { right: 12px; bottom: 12px; width: 7px; height: 7px; }
+      #panel[data-above="true"] #resize { top: 0; bottom: auto; --grip-y: -1; cursor: nesw-resize; }
+      #panel[data-align-right="true"] #resize { left: 0; right: auto; --grip-x: -1; cursor: nesw-resize; }
+      #panel[data-above="true"][data-align-right="true"] #resize { cursor: nwse-resize; }
       .tools { display: flex; flex-wrap: wrap; gap: 7px; padding: 6px 14px 8px; }
+      .font-size { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+      .font-size button { min-width: 36px; padding: 5px 7px; }
+      #font-value { min-width: 4ch; text-align: center; font-variant-numeric: tabular-nums; }
       select, input { min-height: 36px; padding: 5px 8px; min-width: 0; }
       select { flex: 1 1 100%; }
       input { flex: 1 1 125px; }
       input::placeholder { color: #a8b7c7; }
       #status { padding: 0 14px 8px; color: #bbccdd; min-height: 30px; overflow-wrap: anywhere; }
       #cues { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+      #cues:not(:empty) { min-height: 52px; }
       .cue { display: grid; grid-template-columns: 67px minmax(0, 1fr); align-items: start; gap: 9px;
         padding: 8px 14px; border-top: 1px solid #344351; }
       .cue button { font-variant-numeric: tabular-nums; color: #9be6ff; padding: 0 5px; min-height: 25px; }
-      .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+      .text { font-size: var(--subtitle-font-size, 14px); white-space: pre-wrap; overflow-wrap: anywhere; }
       @media (any-pointer: coarse) {
+        :host { --resize-target: 44px; }
         button, input, select, .cue button { min-height: 44px; }
+        .font-size button { min-width: 44px; }
         input, select { font-size: 16px; }
+        input { flex-basis: 96px; }
       }
-      @media (max-width: 520px) {
+      @media (max-width: 520px), (max-height: 420px) {
         :host { --edge: 12px; }
       }
     </style>
-    <button id="toggle" type="button" aria-expanded="false" aria-controls="panel">完整字幕</button>
+    <button id="toggle" type="button" aria-expanded="false" aria-controls="panel"
+      title="点击打开或关闭字幕，拖动或用方向键移动按钮">完整字幕</button>
     <section id="panel" hidden aria-labelledby="heading">
-      <header><h2 id="heading">完整字幕</h2><button id="close" type="button" aria-label="关闭字幕面板">×</button></header>
-      <div class="tools">
-        <select id="tracks" aria-label="字幕轨道" disabled></select>
-        <input id="search" type="search" placeholder="搜索字幕" aria-label="搜索字幕" disabled>
-        <button id="copy" type="button" disabled>复制全文</button>
-        <button id="refresh" type="button">重新加载</button>
+      <div class="panel-content">
+        <header><h2 id="heading">完整字幕</h2><button id="close" type="button" aria-label="关闭字幕面板">×</button></header>
+        <div class="tools">
+          <select id="tracks" aria-label="字幕轨道" disabled></select>
+          <input id="search" type="search" placeholder="搜索字幕" aria-label="搜索字幕" disabled>
+          <button id="copy" type="button" disabled>复制全文</button>
+          <button id="refresh" type="button">重新加载</button>
+          <div class="font-size" role="group" aria-label="字幕字号">
+            <button id="font-smaller" type="button" aria-label="缩小字幕字号" title="缩小字幕字号">A−</button>
+            <output id="font-value"></output>
+            <button id="font-larger" type="button" aria-label="放大字幕字号" title="放大字幕字号">A+</button>
+          </div>
+        </div>
+        <div id="status" role="status"></div>
+        <div id="cues" aria-label="字幕正文"></div>
       </div>
-      <div id="status" role="status"></div>
-      <div id="cues" aria-label="字幕正文"></div>
+      <button id="resize" type="button" aria-label="调整字幕面板大小"
+        title="拖动或用方向键调整面板大小"></button>
     </section>`;
   document.body.append(host);
 
@@ -238,6 +275,8 @@
   const copy = get('copy');
   const status = get('status');
   const list = get('cues');
+  const smallerFont = get('font-smaller');
+  const largerFont = get('font-larger');
 
   let page = initialPage;
   let controller;
@@ -245,6 +284,152 @@
   let cues = [];
   let requested = false;
   const cache = new Map();
+
+  const layoutKey = `${hostId}:layout`;
+  const minPanelWidth = 240;
+  const minPanelHeight = 280;
+  const panelGap = 8;
+  const minFontSize = 12;
+  const maxFontSize = 32;
+  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(layoutKey)) ?? {};
+  } catch {
+    // Storage may be unavailable. The controls still work on this page.
+  }
+  let position = {
+    x: Number.isFinite(saved.position?.x) ? clamp(saved.position.x, 0, 1) : 1,
+    y: Number.isFinite(saved.position?.y) ? clamp(saved.position.y, 0, 1) : 1,
+  };
+  let size = Number.isFinite(saved.size?.width) && Number.isFinite(saved.size?.height) ? {
+    width: Math.max(minPanelWidth, saved.size.width),
+    height: Math.max(minPanelHeight, saved.size.height),
+  } : null;
+  let fontSize = Number.isFinite(saved.fontSize) ? clamp(saved.fontSize, minFontSize, maxFontSize) : 14;
+  let skipToggleClick = false;
+
+  function saveLayout() {
+    try {
+      localStorage.setItem(layoutKey, JSON.stringify({ position, size, fontSize }));
+    } catch {
+      // Keep the current settings in memory.
+    }
+  }
+
+  function layout() {
+    if (!page) return;
+    const width = host.clientWidth;
+    const height = host.clientHeight;
+    const buttonWidth = toggle.offsetWidth;
+    const buttonHeight = toggle.offsetHeight;
+    const maxX = Math.max(0, width - buttonWidth);
+    const maxY = Math.max(0, height - buttonHeight);
+    const x = Math.round(position.x * maxX);
+    const y = Math.round(position.y * maxY);
+    toggle.style.left = `${x}px`;
+    toggle.style.top = `${y}px`;
+    if (panel.hidden) return;
+
+    const above = y >= maxY / 2;
+    const alignRight = x >= maxX / 2;
+    const room = Math.max(0, (above ? y : maxY - y) - panelGap);
+    const panelWidth = Math.min(size?.width ?? 465, width);
+    const panelX = clamp(alignRight ? x + buttonWidth - panelWidth : x, 0, width - panelWidth);
+    panel.dataset.above = String(above);
+    panel.dataset.alignRight = String(alignRight);
+    panel.style.width = `${panelWidth}px`;
+    panel.style.height = size ? `${Math.min(size.height, room)}px` : 'auto';
+    panel.style.maxHeight = `${size ? room : Math.min(room, 660)}px`;
+    panel.style.left = `${panelX}px`;
+    panel.style.top = above ? 'auto' : `${y + buttonHeight + panelGap}px`;
+    panel.style.bottom = above ? `${height - y + panelGap}px` : 'auto';
+  }
+
+  function renderFontSize() {
+    list.style.setProperty('--subtitle-font-size', `${fontSize}px`);
+    get('font-value').textContent = `${fontSize} px`;
+    smallerFont.disabled = fontSize <= minFontSize;
+    largerFont.disabled = fontSize >= maxFontSize;
+  }
+
+  function changeFontSize(amount) {
+    fontSize = clamp(fontSize + amount, minFontSize, maxFontSize);
+    renderFontSize();
+    saveLayout();
+  }
+
+  function bindAdjuster(handle, begin) {
+    let drag;
+    handle.addEventListener('pointerdown', event => {
+      if (drag || !event.isPrimary || event.button !== 0) return;
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, move: begin() };
+      if (event.pointerType !== 'touch') handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener('pointermove', event => {
+      if (drag?.id !== event.pointerId) return;
+      const dx = event.clientX - drag.x;
+      const dy = event.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+      drag.moved = true;
+      drag.move(dx, dy);
+    });
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+      handle.addEventListener(type, event => {
+        if (drag?.id !== event.pointerId) return;
+        if (drag.moved) saveLayout();
+        drag = null;
+      });
+    }
+    const arrows = new Map([
+      ['ArrowLeft', [-16, 0]], ['ArrowRight', [16, 0]],
+      ['ArrowUp', [0, -16]], ['ArrowDown', [0, 16]],
+    ]);
+    handle.addEventListener('keydown', event => {
+      const delta = arrows.get(event.key);
+      if (!delta || drag) return;
+      event.preventDefault();
+      event.stopPropagation();
+      begin()(...delta);
+      saveLayout();
+    });
+  }
+
+  bindAdjuster(toggle, () => {
+    skipToggleClick = false;
+    const x = toggle.offsetLeft;
+    const y = toggle.offsetTop;
+    return (dx, dy) => {
+      skipToggleClick = true;
+      const maxX = host.clientWidth - toggle.offsetWidth;
+      const maxY = host.clientHeight - toggle.offsetHeight;
+      position = {
+        x: maxX > 0 ? clamp((x + dx) / maxX, 0, 1) : position.x,
+        y: maxY > 0 ? clamp((y + dy) / maxY, 0, 1) : position.y,
+      };
+      layout();
+    };
+  });
+  bindAdjuster(get('resize'), () => {
+    const width = panel.offsetWidth;
+    const height = panel.offsetHeight;
+    const directionX = panel.dataset.alignRight === 'true' ? -1 : 1;
+    const directionY = panel.dataset.above === 'true' ? -1 : 1;
+    return (dx, dy) => {
+      size = {
+        width: Math.max(minPanelWidth, width + directionX * dx),
+        height: Math.max(minPanelHeight, height + directionY * dy),
+      };
+      layout();
+    };
+  });
+  smallerFont.addEventListener('click', () => changeFontSize(-2));
+  largerFont.addEventListener('click', () => changeFontSize(2));
+  renderFontSize();
+  layout();
+  const layoutObserver = new ResizeObserver(layout);
+  layoutObserver.observe(host);
+  layoutObserver.observe(toggle);
 
   function beginRequest() {
     controller?.abort();
@@ -338,6 +523,7 @@
     panel.hidden = !open;
     toggle.setAttribute('aria-expanded', String(open));
     if (open) {
+      layout();
       if (!requested) void loadPage();
       get('close').focus();
     } else {
@@ -353,10 +539,15 @@
     requested = false;
     clearText('');
     host.style.display = page ? '' : 'none';
+    layout();
     if (page && !panel.hidden) void loadPage();
   }
 
-  toggle.addEventListener('click', () => {
+  toggle.addEventListener('click', event => {
+    if (skipToggleClick && event.detail !== 0) {
+      skipToggleClick = false;
+      return;
+    }
     syncPage();
     if (page) setOpen(panel.hidden);
   });
