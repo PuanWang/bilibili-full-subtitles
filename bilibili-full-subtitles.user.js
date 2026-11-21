@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         哔哩哔哩完整字幕
 // @namespace    local.bilibili.transcript
-// @version      1.2.0
+// @version      1.3.0
 // @description  在哔哩哔哩视频页阅读、搜索和复制当前分 P 的完整字幕。
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/*/video/*
@@ -201,11 +201,13 @@
       #panel[data-above="false"] { padding-bottom: var(--resize-target); }
       .panel-content { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: auto; }
       header, .tools, #status { flex: none; }
-      header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px 7px; }
+      header { display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding: 6px 10px; }
       #panel[data-above="true"][data-align-right="true"] header { padding-left: var(--resize-target); }
       #panel[data-above="true"][data-align-right="false"] header { padding-right: var(--resize-target); }
-      h2 { font-size: 18px; margin: 0; }
-      #close { font-size: 20px; line-height: 1; }
+      h2 { font-size: 16px; margin: 0 auto 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      header button { min-height: 30px; padding: 2px 8px; white-space: nowrap; }
+      #close { min-width: 32px; font-size: 20px; line-height: 1; }
+      #panel[data-compact="true"] h2, #panel[data-compact="true"] #status.summary, #status:empty { display: none; }
       #resize { position: absolute; right: 0; bottom: 0; width: var(--resize-target); height: var(--resize-target);
         min-height: 0; padding: 0; border: 0; background: transparent; color: #9be6ff;
         cursor: nwse-resize; transform: scale(var(--grip-x, 1), var(--grip-y, 1)); }
@@ -217,7 +219,7 @@
       #panel[data-above="true"] #resize { top: 0; bottom: auto; --grip-y: -1; cursor: nesw-resize; }
       #panel[data-align-right="true"] #resize { left: 0; right: auto; --grip-x: -1; cursor: nesw-resize; }
       #panel[data-above="true"][data-align-right="true"] #resize { cursor: nwse-resize; }
-      .tools { display: flex; flex-wrap: wrap; gap: 7px; padding: 6px 14px 8px; }
+      .tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 6px; }
       .font-size { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
       .font-size button { min-width: 36px; padding: 5px 7px; }
       #font-value { min-width: 4ch; text-align: center; font-variant-numeric: tabular-nums; }
@@ -225,16 +227,20 @@
       select { flex: 1 1 100%; }
       input { flex: 1 1 125px; }
       input::placeholder { color: #a8b7c7; }
-      #status { padding: 0 14px 8px; color: #bbccdd; min-height: 30px; overflow-wrap: anywhere; }
+      #status { padding: 0 10px 4px; font-size: 12px; color: #bbccdd; overflow-wrap: anywhere; }
       #cues { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
       #cues:not(:empty) { min-height: 52px; }
-      .cue { display: grid; grid-template-columns: 67px minmax(0, 1fr); align-items: start; gap: 9px;
-        padding: 8px 14px; border-top: 1px solid #344351; }
-      .cue button { font-variant-numeric: tabular-nums; color: #9be6ff; padding: 0 5px; min-height: 25px; }
-      .text { font-size: var(--subtitle-font-size, 14px); white-space: pre-wrap; overflow-wrap: anywhere; }
+      .cue { display: grid; grid-template-columns: min(42%, calc(var(--timestamp-width, 5ch) + .5em + 2px)) minmax(0, 1fr);
+        align-items: start; gap: .55em; padding: .25em 10px; border-top: 1px solid #344351;
+        font-size: var(--subtitle-font-size, 14px); line-height: 1.4; }
+      .cue-time { font-variant-numeric: tabular-nums; text-align: center; overflow-wrap: anywhere; }
+      .cue button { min-height: 0; color: #9be6ff; padding: .1em .25em; border-radius: .35em; }
+      .text { white-space: pre-wrap; overflow-wrap: anywhere; }
       @media (any-pointer: coarse) {
         :host { --resize-target: 44px; }
-        button, input, select, .cue button { min-height: 44px; }
+        button, input, select { min-height: 44px; }
+        header button { min-height: 36px; }
+        #close { min-width: 36px; }
         .font-size button { min-width: 44px; }
         input, select { font-size: 16px; }
         input { flex-basis: 96px; }
@@ -247,8 +253,12 @@
       title="点击打开或关闭字幕，拖动或用方向键移动按钮">完整字幕</button>
     <section id="panel" hidden aria-labelledby="heading">
       <div class="panel-content">
-        <header><h2 id="heading">完整字幕</h2><button id="close" type="button" aria-label="关闭字幕面板">×</button></header>
-        <div class="tools">
+        <header>
+          <h2 id="heading">完整字幕</h2>
+          <button id="view-mode" type="button" aria-controls="tools" aria-expanded="true">精简</button>
+          <button id="close" type="button" aria-label="关闭字幕面板">×</button>
+        </header>
+        <div id="tools" class="tools">
           <select id="tracks" aria-label="字幕轨道" disabled></select>
           <input id="search" type="search" placeholder="搜索字幕" aria-label="搜索字幕" disabled>
           <button id="copy" type="button" disabled>复制全文</button>
@@ -277,6 +287,8 @@
   const list = get('cues');
   const smallerFont = get('font-smaller');
   const largerFont = get('font-larger');
+  const viewMode = get('view-mode');
+  const toolbar = get('tools');
 
   let page = initialPage;
   let controller;
@@ -307,11 +319,12 @@
     height: Math.max(minPanelHeight, saved.size.height),
   } : null;
   let fontSize = Number.isFinite(saved.fontSize) ? clamp(saved.fontSize, minFontSize, maxFontSize) : 14;
+  let compact = saved.compact === true;
   let skipToggleClick = false;
 
   function saveLayout() {
     try {
-      localStorage.setItem(layoutKey, JSON.stringify({ position, size, fontSize }));
+      localStorage.setItem(layoutKey, JSON.stringify({ position, size, fontSize, compact }));
     } catch {
       // Keep the current settings in memory.
     }
@@ -357,6 +370,13 @@
     fontSize = clamp(fontSize + amount, minFontSize, maxFontSize);
     renderFontSize();
     saveLayout();
+  }
+
+  function renderViewMode() {
+    panel.dataset.compact = String(compact);
+    toolbar.hidden = compact;
+    viewMode.textContent = compact ? '显示工具' : '精简';
+    viewMode.setAttribute('aria-expanded', String(!compact));
   }
 
   function bindAdjuster(handle, begin) {
@@ -425,7 +445,13 @@
   });
   smallerFont.addEventListener('click', () => changeFontSize(-2));
   largerFont.addEventListener('click', () => changeFontSize(2));
+  viewMode.addEventListener('click', () => {
+    compact = !compact;
+    renderViewMode();
+    saveLayout();
+  });
   renderFontSize();
+  renderViewMode();
   layout();
   const layoutObserver = new ResizeObserver(layout);
   layoutObserver.observe(host);
@@ -437,23 +463,31 @@
     return controller.signal;
   }
 
+  function setStatus(message, summary = false) {
+    status.textContent = message;
+    status.classList.toggle('summary', summary);
+  }
+
   function clearText(message) {
     cues = [];
     list.replaceChildren();
     search.disabled = true;
     copy.disabled = true;
-    status.textContent = message;
+    setStatus(message);
   }
 
   function render() {
     const query = search.value.trim().toLocaleLowerCase();
     const visible = query ? cues.filter(cue => cue.text.toLocaleLowerCase().includes(query)) : cues;
     const fragment = document.createDocumentFragment();
+    let timestampWidth = 5;
     for (const cue of visible) {
       const row = document.createElement('div');
       row.className = 'cue';
       const time = document.createElement(cue.start === null ? 'span' : 'button');
+      time.className = 'cue-time';
       time.textContent = cue.start === null ? '—' : formatTime(cue.start);
+      timestampWidth = Math.max(timestampWidth, time.textContent.length);
       if (time instanceof HTMLButtonElement) {
         time.type = 'button';
         time.dataset.start = String(cue.start);
@@ -465,10 +499,11 @@
       row.append(time, line);
       fragment.append(row);
     }
+    list.style.setProperty('--timestamp-width', `${timestampWidth}ch`);
     list.replaceChildren(fragment);
     list.scrollTop = 0;
-    status.textContent = `P${page.part} · ${query ? `${visible.length} / ${cues.length}` : cues.length} 条` +
-      (query && !visible.length ? ' · 没有匹配的字幕' : '');
+    const count = `P${page.part} · ${query ? `${visible.length} / ${cues.length}` : cues.length} 条`;
+    setStatus(visible.length ? count : `${count} · 没有匹配的字幕`, visible.length > 0);
   }
 
   async function loadTrack(index) {
@@ -482,7 +517,7 @@
       if (signal.aborted) return;
       cache.set(track.key, loaded);
       if (!loaded.length) {
-        status.textContent = '这条字幕轨没有正文。';
+        setStatus('这条字幕轨没有正文。');
         return;
       }
       cues = loaded;
@@ -490,7 +525,7 @@
       copy.disabled = false;
       render();
     } catch (error) {
-      if (!signal.aborted) status.textContent = `字幕正文加载失败（${error.message}）。可切换轨道或重新加载。`;
+      if (!signal.aborted) setStatus(`字幕正文加载失败（${error.message}）。可切换轨道或重新加载。`);
     }
   }
 
@@ -508,14 +543,14 @@
       if (signal.aborted) return;
       tracks = result.tracks;
       if (!tracks.length) {
-        status.textContent = result.message;
+        setStatus(result.message);
         return;
       }
       select.replaceChildren(...tracks.map((track, index) => new Option(track.label, String(index))));
       select.disabled = false;
       await loadTrack(0);
     } catch (error) {
-      if (!signal.aborted) status.textContent = `字幕轨加载失败（${error.message}）。请重新加载。`;
+      if (!signal.aborted) setStatus(`字幕轨加载失败（${error.message}）。请重新加载。`);
     }
   }
 
@@ -563,9 +598,9 @@
     const current = cues;
     try {
       await navigator.clipboard.writeText(current.map(cue => cue.text).join('\n'));
-      if (current === cues) status.textContent = `已复制 ${current.length} 条字幕。`;
+      if (current === cues) setStatus(`已复制 ${current.length} 条字幕。`);
     } catch {
-      if (current === cues) status.textContent = '浏览器未允许访问剪贴板，可选中字幕文字后手动复制。';
+      if (current === cues) setStatus('浏览器未允许访问剪贴板，可选中字幕文字后手动复制。');
     }
   });
   list.addEventListener('click', event => {
@@ -576,7 +611,7 @@
       if (!player || !('currentTime' in player)) throw new Error();
       player.currentTime = Number(button.dataset.start);
     } catch {
-      status.textContent = '当前播放器尚不能跳转，请先播放或等待视频加载。';
+      setStatus('当前播放器尚不能跳转，请先播放或等待视频加载。');
     }
   });
 
